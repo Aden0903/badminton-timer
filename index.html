@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101827">
+<meta name="description" content="3秒タッピング、3秒スマッシュのバドミントン練習タイマー">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<title>バドミントン練習タイマー</title>
+<style>
+:root{color-scheme:dark;--bg:#101827;--panel:#1b293d;--line:#304158;--muted:#a8b6c9;--accent:#78e0b2;--white:#f7fbff}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(160deg,#101827,#172b38);color:var(--white);font-family:-apple-system,BlinkMacSystemFont,"Hiragino Kaku Gothic ProN",Meiryo,sans-serif;min-height:100svh}
+main{max-width:520px;margin:auto;padding:22px 16px calc(28px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:14px}
+header{text-align:center;padding:8px 0 2px}header small{letter-spacing:.18em;color:var(--muted);font-weight:700}h1{font-size:22px;margin:8px 0}
+.panel{background:rgba(27,41,61,.94);border:1px solid var(--line);border-radius:22px;padding:18px}
+.display{text-align:center;padding:24px 18px}.phase{font-size:clamp(28px,8vw,42px);font-weight:900;letter-spacing:.02em}.instruction{font-size:17px;font-weight:700;margin:8px 0 16px}.count{font-size:clamp(76px,22vw,112px);line-height:1;font-weight:900;font-variant-numeric:tabular-nums;letter-spacing:-.06em}.bar{height:9px;background:#34465c;border-radius:20px;overflow:hidden;margin:22px 0 12px}.fill{height:100%;width:0;background:var(--accent);transition:width .06s linear}.muted{color:var(--muted);font-size:13px}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:12px}.stat{text-align:center}.stat b{display:block;font-size:25px;margin-top:5px}
+label{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:12px 0;font-size:14px}
+input,select{font:inherit;color:var(--white);background:#101d2d;border:1px solid var(--line);border-radius:10px;padding:10px;width:105px;text-align:center}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}.actions button:first-child{grid-column:1/-1}
+button{border:0;border-radius:14px;padding:15px 12px;font-size:16px;font-weight:800;cursor:pointer}
+.primary{background:var(--accent);color:#10251e}.secondary{background:#26384e;color:var(--white);border:1px solid var(--line)}button:disabled{opacity:.45;cursor:not-allowed}
+.status{text-align:center;color:var(--muted);font-size:13px;min-height:20px}
+.install{display:none;background:#203c3b;border:1px solid #3b7565;border-radius:14px;padding:13px;color:#dffff2;text-align:center;font-weight:700}
+footer{text-align:center;color:var(--muted);font-size:12px;line-height:1.6}
+</style>
+</head>
+<body>
+<main>
+<header><small>BADMINTON TRAINING</small><h1>🏸 3秒3秒フットワークタイマー</h1></header>
+<section class="panel display" aria-live="polite">
+ <div class="phase" id="phase">READY</div>
+ <div class="instruction" id="instruction">準備ができたらスタート！</div>
+ <div class="count" id="count">3.0</div>
+ <div class="bar"><div class="fill" id="fill"></div></div>
+ <div class="muted" id="round">スマッシュ回数：0回</div>
+</section>
+<section class="stats">
+ <div class="panel stat"><span class="muted">タッピング</span><b id="tapLabel">3秒</b></div>
+ <div class="panel stat"><span class="muted">スマッシュ</span><b id="smashLabel">3秒</b></div>
+</section>
+<section class="panel">
+ <strong>練習設定</strong>
+ <label>タッピング時間<input id="tap" type="number" min="1" max="30" value="3"></label>
+ <label>スマッシュ時間<input id="smash" type="number" min="1" max="10" value="3"></label>
+ <label>練習回数（0＝無制限）<input id="reps" type="number" min="0" max="999" value="0"></label>
+ <label>スタート前カウントダウン<select id="pre"><option value="0">なし</option><option value="3" selected>3秒</option><option value="5">5秒</option></select></label>
+ <label>合図音<select id="tone"><option value="high">高い音</option><option value="low">低い音</option><option value="double">2連続音</option></select></label>
+</section>
+<div class="actions">
+ <button class="primary" id="start">▶ スタート</button>
+ <button class="secondary" id="pause" disabled>一時停止</button>
+ <button class="secondary" id="reset">リセット</button>
+</div>
+<div class="status" id="status">3秒タッピング → 3秒スマッシュを繰り返します。</div>
+<button class="install" id="install">ホーム画面に追加</button>
+<footer>スマッシュ中は開始時と1秒後、2秒後に音が鳴ります。<br>音が出ない場合は端末の消音設定・音量をご確認ください。</footer>
+</main>
+<script>
+(()=>{
+const $=id=>document.getElementById(id);
+let audio=null,raf=0,running=false,paused=false,phase='idle',end=0,left=0,duration=3000,round=0,lastMark=-1,preDuration=0;
+const num=(id,def,min,max)=>Math.max(min,Math.min(max,Number($(id).value)||def));
+function beep(){
+ try{
+  audio=audio||new(window.AudioContext||window.webkitAudioContext)();
+  if(audio.state==='suspended')audio.resume();
+  const mode=$('tone').value;
+  [0,...(mode==='double'?[.14]:[])].forEach(d=>{
+   const o=audio.createOscillator(),g=audio.createGain(),t=audio.currentTime+d;
+   o.type='sine';o.frequency.value=mode==='low'?620:1050;
+   g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.28,t+.012);g.gain.exponentialRampToValueAtTime(.0001,t+.18);
+   o.connect(g);g.connect(audio.destination);o.start(t);o.stop(t+.2);
+  });
+ }catch(e){$('status').textContent='音声を開始できません。端末の設定をご確認ください。'}
+}
+function show(ms,total){$('count').textContent=(Math.max(0,ms)/1000).toFixed(1);$('fill').style.width=(100*(1-Math.max(0,ms)/total))+'%'}
+function begin(p){
+ phase=p;duration=(p==='tap'?num('tap',3,1,30):num('smash',3,1,10))*1000;
+ end=performance.now()+duration;lastMark=-1;
+ if(p==='tap'){$('phase').textContent='TAP!';$('instruction').textContent='足をタッピング！'}
+ else{$('phase').textContent='SMASH!';$('instruction').textContent='ラケットを振る！';beep()}
+ show(duration,duration);
+}
+function finish(){
+ running=false;paused=false;phase='done';cancelAnimationFrame(raf);
+ $('phase').textContent='FINISH';$('instruction').textContent='練習終了！お疲れさま！';$('count').textContent='✓';$('fill').style.width='100%';
+ $('start').textContent='↻ もう一度';$('pause').disabled=true;$('status').textContent='設定した回数が終了しました。';
+}
+function frame(){
+ if(!running)return;
+ const ms=end-performance.now();
+ if(phase==='pre'){
+  if(ms<=0){beep();begin('tap')}else show(ms,preDuration);
+ }else if(ms<=0){
+  if(phase==='tap')begin('smash');
+  else{round++;$('round').textContent='スマッシュ回数：'+round+'回';const limit=num('reps',0,0,999);if(limit&&round>=limit){finish();return}begin('tap')}
+ }else{
+  if(phase==='smash'){const mark=Math.floor((duration-ms)/1000);if(mark>lastMark&&mark>=1){lastMark=mark;beep()}}
+  show(ms,duration);
+ }
+ if(running)raf=requestAnimationFrame(frame);
+}
+function start(){
+ if(running)return;
+ if(phase==='idle'||phase==='done'){
+  round=0;$('round').textContent='スマッシュ回数：0回';
+  const p=num('pre',3,0,5);
+  if(p){phase='pre';preDuration=p*1000;end=performance.now()+preDuration;$('phase').textContent='READY';$('instruction').textContent='スタート準備！';show(preDuration,preDuration)}
+  else begin('tap');
+ }else if(paused)end=performance.now()+left;
+ running=true;paused=false;$('start').textContent='▶ 実行中';$('pause').disabled=false;$('status').textContent='音が鳴ったらスマッシュ！';raf=requestAnimationFrame(frame);
+}
+function pause(){
+ if(!running)return;left=Math.max(0,end-performance.now());running=false;paused=true;cancelAnimationFrame(raf);
+ $('start').textContent='▶ 再開';$('pause').disabled=true;$('status').textContent='一時停止中';
+}
+function reset(){
+ running=false;paused=false;phase='idle';round=0;cancelAnimationFrame(raf);
+ $('phase').textContent='READY';$('instruction').textContent='準備ができたらスタート！';$('count').textContent=num('tap',3,1,30).toFixed(1);
+ $('fill').style.width='0%';$('round').textContent='スマッシュ回数：0回';$('start').textContent='▶ スタート';$('pause').disabled=true;
+ $('status').textContent='3秒タッピング → 3秒スマッシュを繰り返します。';
+}
+$('start').addEventListener('click',start);$('pause').addEventListener('click',pause);$('reset').addEventListener('click',reset);
+['tap','smash','reps','pre','tone'].forEach(id=>$(id).addEventListener('change',()=>{if(!running)reset()}));
+['tap','smash'].forEach(id=>$(id).addEventListener('input',()=>{$(id+'Label').textContent=num(id,id==='tap'?3:3,1,id==='tap'?30:10)+'秒'}));
+if('serviceWorker'in navigator && location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
+let installPrompt=null;
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;$('install').style.display='block'});
+$('install').addEventListener('click',async()=>{if(!installPrompt)return;installPrompt.prompt();await installPrompt.userChoice;installPrompt=null;$('install').style.display='none'});
+})();
+</script>
+</body></html>
